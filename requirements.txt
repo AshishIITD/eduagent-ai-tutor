@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+langgraph
+langchain
+langchain-openai
+langchain-huggingface
+langchain-community
+sentence-transformers
+faiss-cpu
+ragas
+datasets
+streamlit
+python-dotenv
+pydantic
+pandas
