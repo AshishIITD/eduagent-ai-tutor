@@ -2,7 +2,7 @@ fastapi
 uvicorn
 langgraph
 langchain
-langchain-openai
+langchain-google-genai
 langchain-huggingface
 langchain-community
 sentence-transformers
@@ -13,3 +13,4 @@ streamlit
 python-dotenv
 pydantic
 pandas
+google-generativeai
