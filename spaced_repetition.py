@@ -1,12 +1,13 @@
 """
-Ebbinghaus forgetting curve spaced repetition scheduler.
+Ebbinghaus forgetting curve spaced repetition scheduler (SM-2 variant).
 Determines optimal next review time for each topic based on
 student performance history.
 """
+import os
+import json
 import math
 from datetime import datetime, timedelta
 from typing import Optional
-
 
 # Ebbinghaus stability multipliers per performance level
 PERFORMANCE_MULTIPLIERS = {
@@ -18,6 +19,22 @@ PERFORMANCE_MULTIPLIERS = {
 }
 
 DEFAULT_INTERVAL_DAYS = 1.0
+SCHEDULE_FILE = "student_schedules.json"
+
+
+def load_schedules() -> dict:
+    if os.path.exists(SCHEDULE_FILE):
+        try:
+            with open(SCHEDULE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_schedules(schedules: dict):
+    with open(SCHEDULE_FILE, "w") as f:
+        json.dump(schedules, f, indent=2, default=str)
 
 
 def next_review_interval(
@@ -49,7 +66,7 @@ def next_review_interval(
     return round(next_interval, 2), round(new_ease, 3)
 
 
-def get_due_topics(topic_history: dict[str, dict]) -> list[dict]:
+def get_due_topics_internal(topic_history: dict[str, dict]) -> list[dict]:
     """
     Given a dict of {topic: {last_reviewed, interval_days, ease_factor, accuracy}},
     return topics due for review today, sorted by urgency.
@@ -115,3 +132,92 @@ def update_topic(
         "reviews": reviews,
     }
     return topic_history
+
+
+# ── Server Endpoint Implementations ──────────────────────────────────────────
+
+def get_due_topics(student_id: str) -> list[dict]:
+    """Exposed for server endpoint: retrieves list of due topics."""
+    schedules = load_schedules()
+    student_history = schedules.get(student_id, {})
+    due_internal = get_due_topics_internal(student_history)
+    
+    # Map to server response shape
+    due_topics = []
+    for item in due_internal:
+        topic_id = item["topic"]
+        info = student_history[topic_id]
+        due_topics.append({
+            "topic_id": topic_id,
+            "topic_name": info.get("topic_name", topic_id),
+            "review_count": info.get("reviews", 1),
+            "last_score": info.get("accuracy", 0.0),
+            "next_review": (datetime.fromisoformat(info["last_reviewed"]) + timedelta(days=info["interval_days"])).isoformat()
+        })
+    return due_topics
+
+
+def record_review(student_id: str, topic_id: str, topic_name: str, score: float) -> dict:
+    """Exposed for server endpoint: records a student's review result."""
+    schedules = load_schedules()
+    student_history = schedules.setdefault(student_id, {})
+
+    # Map numerical score to performance string
+    if score >= 0.9:
+        performance = "perfect"
+    elif score >= 0.7:
+        performance = "good"
+    elif score >= 0.5:
+        performance = "okay"
+    elif score >= 0.3:
+        performance = "poor"
+    else:
+        performance = "fail"
+
+    # Save additional metadata in the schedule
+    if topic_id in student_history:
+        student_history[topic_id]["topic_name"] = topic_name
+    else:
+        student_history[topic_id] = {
+            "last_reviewed": datetime.utcnow().isoformat(),
+            "interval_days": DEFAULT_INTERVAL_DAYS,
+            "ease_factor": 2.5,
+            "accuracy": 0.0,
+            "reviews": 0,
+            "topic_name": topic_name
+        }
+
+    update_topic(student_history, topic_id, performance)
+    save_schedules(schedules)
+
+    info = student_history[topic_id]
+    next_date = (datetime.fromisoformat(info["last_reviewed"]) + timedelta(days=info["interval_days"])).isoformat()
+
+    return {
+        "topic_id": topic_id,
+        "next_review_in_days": info["interval_days"],
+        "next_review_date": next_date
+    }
+
+
+def get_student_analytics(student_id: str) -> dict:
+    """Exposed for server endpoint: retrieves analytics of student progress."""
+    schedules = load_schedules()
+    student_history = schedules.get(student_id, {})
+
+    if not student_history:
+        return {"message": "No data found for this student."}
+
+    topics = list(student_history.values())
+    avg_score = sum(t.get("accuracy", 0.0) for t in topics) / len(topics)
+    weak_areas = [t.get("topic_name", tid) for tid, t in student_history.items() if t.get("accuracy", 0.0) < 0.6]
+    strong_areas = [t.get("topic_name", tid) for tid, t in student_history.items() if t.get("accuracy", 0.0) >= 0.8]
+
+    return {
+        "student_id": student_id,
+        "total_topics_studied": len(topics),
+        "average_score": round(avg_score, 2),
+        "weak_areas": weak_areas,
+        "strong_areas": strong_areas,
+        "topics_due_today": len(get_due_topics(student_id))
+    }

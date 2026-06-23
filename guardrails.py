@@ -117,3 +117,19 @@ def check_output_grounding(answer: str, context_docs: list[str]) -> dict:
         "reason": f"{matched}/{len(answer_words)} key terms found in retrieved context.",
         "keyword_coverage": f"{coverage:.1%}"
     }
+
+
+def input_guardrail(query: str) -> dict:
+    """Backward compatibility wrapper for check_input."""
+    return check_input(query)
+
+
+def output_guardrail(question: str, answer: str, context: str) -> dict:
+    """Backward compatibility wrapper for check_output_grounding."""
+    res = check_output_grounding(answer, [context])
+    return {
+        "safe": res["grounded"],
+        "verdict": res["verdict"],
+        "reason": res["reason"]
+    }
+
